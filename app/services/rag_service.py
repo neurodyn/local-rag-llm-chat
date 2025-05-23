@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 class RAGService:
     def __init__(self):
         """Initialize the RAG service with basic setup."""
-        self.is_initialized = False
         self.initialization_error = None
         self.initialization_status = "Not started"
         self.initialization_progress = {
@@ -39,13 +38,22 @@ class RAGService:
         }
         self.documents_dir = Path("data/documents")
         self.vector_store_dir = Path("data/vectorstore")
+        self.init_state_file = Path("data/init_state.json")
         self.documents_dir.mkdir(parents=True, exist_ok=True)
         self.vector_store_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Load initialization state
+        self.is_initialized = self._load_init_state()
+        
         self.llm = None
         self.chat_model = None
         self.embeddings = None
         self.vector_store = None
         self.conversations = {}
+        
+        # If initialized, load the models
+        if self.is_initialized:
+            self._load_models()
         
         # Supported file types
         self.supported_mimetypes = {
@@ -53,6 +61,65 @@ class RAGService:
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document': self._extract_docx_text,
             'text/plain': self._extract_text_file,
         }
+
+    def _load_init_state(self) -> bool:
+        """Load initialization state from file."""
+        try:
+            if self.init_state_file.exists():
+                import json
+                with open(self.init_state_file, 'r') as f:
+                    state = json.load(f)
+                    return state.get('initialized', False)
+            return False
+        except Exception as e:
+            logger.error(f"Error loading initialization state: {e}")
+            return False
+
+    def _save_init_state(self, initialized: bool):
+        """Save initialization state to file."""
+        try:
+            import json
+            with open(self.init_state_file, 'w') as f:
+                json.dump({'initialized': initialized}, f)
+        except Exception as e:
+            logger.error(f"Error saving initialization state: {e}")
+
+    async def _load_models(self):
+        """Load models if already initialized."""
+        try:
+            model_id = "mlx-community/Mistral-7B-Instruct-v0.3-4bit"
+            embedding_model_id = "all-MiniLM-L6-v2"
+            
+            # Load MLX model
+            self.llm = await run_in_threadpool(
+                MLXPipeline.from_model_id,
+                model_id,
+                pipeline_kwargs={"max_tokens": 512, "temp": 0.7}
+            )
+            self.chat_model = ChatMLX(llm=self.llm)
+            
+            # Load embeddings
+            self.embeddings = await run_in_threadpool(
+                lambda: HuggingFaceEmbeddings(
+                    model_name=embedding_model_id,
+                    model_kwargs={'device': 'cpu'}
+                )
+            )
+            
+            # Load vector store
+            self.vector_store = await run_in_threadpool(
+                lambda: Chroma(
+                    persist_directory=str(self.vector_store_dir),
+                    embedding_function=self.embeddings
+                )
+            )
+            
+            logger.info("Models loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading models: {e}")
+            self.is_initialized = False
+            self._save_init_state(False)
+            raise
 
     def _extract_pdf_text(self, file_path: Path) -> str:
         """Extract text from a PDF file with enhanced table support."""
@@ -261,12 +328,15 @@ class RAGService:
             )
             
             self.is_initialized = True
+            self._save_init_state(True)
             
         except Exception as e:
             self.initialization_error = str(e)
             self.initialization_status = f"Initialization failed: {str(e)}"
             self.initialization_progress["detailed_status"] = str(e)
             logger.error(self.initialization_status)
+            self.is_initialized = False
+            self._save_init_state(False)
             raise
 
     def get_initialization_status(self) -> Dict[str, any]:
