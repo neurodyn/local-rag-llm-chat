@@ -1,14 +1,14 @@
 # Local RAG System with MLX
 
-A web-based RAG (Retrieval Augmented Generation) system that uses MLX for accelerated LLM inference on Mac laptops. The system allows users to upload documents, process them for RAG, and query them using a chat interface.
+A web-based RAG (Retrieval Augmented Generation) system that uses MLX for accelerated LLM inference on Mac laptops. The system allows users to upload documents, process them for RAG, and query multiple documents simultaneously using a chat interface.
 
 ## Features
 
 - Document upload and processing
+- Multi-document selection and querying
 - Vector database storage using ChromaDB
 - MLX-accelerated LLM inference using Mistral-7B
 - Interactive chat interface with conversation history
-- Document summarization
 - Source attribution for answers
 - FastAPI-based web interface
 - Modern UI with real-time updates
@@ -20,6 +20,34 @@ A web-based RAG (Retrieval Augmented Generation) system that uses MLX for accele
 - Python 3.9+
 - Hugging Face account (for model access)
 - Conda package manager
+
+## System Requirements
+
+### System Dependencies
+- Python 3.9+
+- Poppler (for PDF processing)
+  - macOS: `brew install poppler`
+  - Linux: `sudo apt-get install poppler-utils`
+  - Windows: Download from [poppler releases](http://blog.alivate.com.au/poppler-windows/)
+- Tesseract OCR (for text extraction from PDFs and images)
+  - macOS: `brew install tesseract`
+  - Linux: `sudo apt-get install tesseract-ocr`
+  - Windows: Download installer from [UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki)
+  - Note: After installation, ensure Tesseract is in your system PATH
+
+### Python Dependencies
+All Python dependencies are listed in `requirements.txt` and include:
+- LangChain and LangChain Community packages for RAG implementation
+- FastAPI and Uvicorn for web server
+- MLX and MLX-LM for Apple Silicon optimized inference
+- ChromaDB for vector storage
+- Sentence Transformers for embeddings
+- Document processing:
+  - PyPDF2 and pdf2image for PDF handling
+  - python-docx for Word documents
+  - unstructured and unstructured-inference for enhanced document parsing
+  - python-magic for file type detection
+  - pytesseract for OCR capabilities
 
 ## Setup
 
@@ -79,37 +107,48 @@ local-rag/
 
 1. Open the web interface at `http://localhost:8000`
 2. Upload documents using the upload interface
-3. Select a document from the list of uploaded documents
-4. Use the chat interface to:
-   - Query the document
-   - Request document summaries
+3. Select one or more documents using the checkboxes
+4. Click "Start Chat with Selected Documents" to begin querying
+5. Use the chat interface to:
+   - Query across all selected documents
    - View conversation history
    - See source attributions for answers
 
 ## Features in Detail
 
+### Multi-Document RAG Implementation
+- Supports querying across multiple documents simultaneously
+- Dynamic retrieval scaling based on number of documents
+- Ensures balanced context from all selected documents
+- Document coverage tracking for comprehensive answers
+- Unified conversation history across document sets
+
 ### RAG Implementation
 - Uses LangChain's RetrievalQA chains
 - Document chunking with overlap for context preservation
 - Semantic search using HuggingFace embeddings
-- Different chain types for different tasks:
-  - 'stuff' chain for regular queries
-  - 'map_reduce' chain for document summarization
+- Retriever configuration:
+  - Automatic scaling of retrieved chunks based on document count
+  - Minimum of 2 chunks per document for context
+  - Document coverage tracking to ensure all selected documents are represented
 
 ### Conversation Management
-- Maintains conversation history per document
+- Maintains conversation history per document set
 - Context-aware responses using conversation memory
 - Full conversation history retrieval
+- Synchronized history across multiple documents
 
 ### Source Attribution
-- Shows which parts of the document were used for answers
+- Shows which parts of each document were used for answers
 - Includes metadata about document chunks
 - Helps verify answer accuracy
+- Tracks document coverage in multi-document queries
 
 ### Error Handling and Logging
 - Comprehensive error handling
 - Detailed logging for troubleshooting
 - HTTP error responses with meaningful messages
+- Document coverage logging for debugging
 
 ## Testing
 
@@ -287,3 +326,22 @@ If you encounter authentication issues:
 3. Use read-only tokens for deployment
 4. Set appropriate environment variables in your deployment environment
 5. Consider using a secrets manager for production deployments 
+
+## Installation
+
+1. Install system dependencies:
+```bash
+# macOS
+brew install poppler
+
+# Linux
+sudo apt-get install poppler-utils
+
+# Windows
+# Download and install poppler from http://blog.alivate.com.au/poppler-windows/
+```
+
+2. Install Python dependencies:
+```bash
+pip install -r requirements.txt
+```

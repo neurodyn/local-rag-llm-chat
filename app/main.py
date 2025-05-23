@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 class QueryRequest(BaseModel):
     query: str
+    document_ids: List[str]
 
 app = FastAPI(title="Local RAG System")
 
@@ -66,31 +67,31 @@ async def upload_document(file: UploadFile = File(...)):
             content={"error": str(e)}
         )
 
-@app.get("/documents/{document_id}/summary")
-async def get_document_summary(document_id: str):
-    """Generate a summary for a specific document."""
+@app.post("/documents/query")
+async def query_documents(request: QueryRequest):
+    """Process a query across multiple documents."""
     try:
-        summary, sources = await rag_service.summarize_document(document_id)
-        return {"summary": summary, "sources": sources}
+        logger.info(f"Processing query across documents {request.document_ids}: {request.query}")
+        if not rag_service.is_initialized:
+            raise Exception("Service is not initialized yet. Please wait for initialization to complete.")
+            
+        result = await rag_service.process_query_multi(request.document_ids, request.query)
+        return result
     except Exception as e:
-        logger.error(f"Error generating summary: {str(e)}")
+        logger.error(f"Error processing query: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
         )
 
-@app.post("/documents/{document_id}/query")
-async def query_document(document_id: str, request: QueryRequest):
-    """Process a query for a specific document."""
+@app.delete("/documents/{document_id}")
+async def delete_document(document_id: str):
+    """Delete a document from the system."""
     try:
-        logger.info(f"Processing query for document {document_id}: {request.query}")
-        if not rag_service.is_initialized:
-            raise Exception("Service is not initialized yet. Please wait for initialization to complete.")
-            
-        result = await rag_service.process_query(document_id, request.query)
-        return result  # Already in the correct format: {"response": response_text, "sources": sources}
+        await rag_service.delete_document(document_id)
+        return {"status": "success", "message": f"Document {document_id} deleted successfully"}
     except Exception as e:
-        logger.error(f"Error processing query: {str(e)}")
+        logger.error(f"Error deleting document: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}

@@ -11,14 +11,13 @@ from huggingface_hub import hf_hub_download, HfApi
 from tqdm.auto import tqdm
 from langchain_community.llms.mlx_pipeline import MLXPipeline
 from langchain_community.chat_models.mlx import ChatMLX
-from langchain.chains import ConversationalRetrievalChain
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain.memory import ConversationBufferMemory
 from langchain_core.messages import HumanMessage, AIMessage
 from fastapi import UploadFile, HTTPException
 from ..models.document import Document
+from unstructured.partition.pdf import partition_pdf
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -55,13 +54,22 @@ class RAGService:
         }
 
     def _extract_pdf_text(self, file_path: Path) -> str:
-        """Extract text from a PDF file."""
+        """Extract text from a PDF file with enhanced table support."""
         try:
-            reader = PdfReader(file_path)
+            logger.info(f"Extracting text from PDF: {file_path}")
+            elements = partition_pdf(str(file_path))
             text = ""
-            for page in reader.pages:
-                text += page.extract_text() + "\n"
+            
+            for element in elements:
+                if hasattr(element, "text"):
+                    text += element.text + "\n\n"
+                    
+            if not text.strip():
+                raise ValueError("No text could be extracted from the PDF")
+                
+            logger.info(f"Successfully extracted {len(text)} characters from PDF")
             return text
+                
         except Exception as e:
             logger.error(f"Error extracting text from PDF {file_path}: {e}")
             raise HTTPException(
@@ -70,12 +78,25 @@ class RAGService:
             )
 
     def _extract_docx_text(self, file_path: Path) -> str:
-        """Extract text from a Word document."""
+        """Extract text from a Word document with enhanced table support."""
         try:
             doc = DocxDocument(file_path)
             text = ""
+            
+            # Extract paragraphs
             for paragraph in doc.paragraphs:
                 text += paragraph.text + "\n"
+                
+            # Extract tables
+            for table in doc.tables:
+                text += "\nTable:\n"
+                for row in table.rows:
+                    row_text = [cell.text.strip() for cell in row.cells]
+                    # Only add rows that have actual content
+                    if any(cell for cell in row_text):
+                        text += " | ".join(row_text) + "\n"
+                text += "\n"
+                
             return text
         except Exception as e:
             logger.error(f"Error extracting text from DOCX {file_path}: {e}")
@@ -103,8 +124,16 @@ class RAGService:
 
     def update_status(self, step: str, progress: int = 0, details: str = ""):
         """Update initialization status with progress information."""
+        steps = {
+            "Checking model files": 0,
+            "Downloading Mistral model": 1,
+            "Setting up embeddings": 2,
+            "Configuring vector store": 3,
+            "Initialization complete": 4
+        }
+        
         self.initialization_progress["current_step"] = step
-        self.initialization_progress["current_step_number"] += 1
+        self.initialization_progress["current_step_number"] = steps.get(step, 0)
         self.initialization_progress["download_progress"] = progress
         self.initialization_progress["detailed_status"] = details
         self.initialization_status = f"{step} - {details}"
@@ -119,7 +148,7 @@ class RAGService:
             # Step 1: Check model cache and download if needed
             self.update_status(
                 "Checking model files",
-                0,
+                10,
                 "Verifying model cache and downloading if needed..."
             )
 
@@ -129,6 +158,11 @@ class RAGService:
             # Get model file sizes for progress tracking
             api = HfApi()
             try:
+                self.update_status(
+                    "Checking model files",
+                    20,
+                    "Checking model repository information..."
+                )
                 model_files = api.list_repo_files(model_id)
                 total_size = sum(
                     api.get_repo_info(model_id).siblings[i].size 
@@ -142,20 +176,26 @@ class RAGService:
             # Download and initialize MLX model
             self.update_status(
                 "Downloading Mistral model",
-                0,
+                30,
                 "Starting model download..."
             )
             
             try:
                 # Initialize MLX model through LangChain
+                self.update_status(
+                    "Downloading Mistral model",
+                    40,
+                    "Downloading model files..."
+                )
+                
                 self.llm = MLXPipeline.from_model_id(
                     model_id,
                     pipeline_kwargs={"max_tokens": 512, "temp": 0.7}
                 )
                 
                 self.update_status(
-                    "Initializing MLX model",
-                    50,
+                    "Downloading Mistral model",
+                    60,
                     "Model downloaded, setting up MLX pipeline..."
                 )
                 
@@ -173,13 +213,19 @@ class RAGService:
             # Initialize embeddings
             self.update_status(
                 "Setting up embeddings",
-                75,
+                70,
                 "Downloading and initializing embedding model..."
             )
             
             self.embeddings = HuggingFaceEmbeddings(
                 model_name=embedding_model_id,
                 model_kwargs={'device': 'cpu'}
+            )
+            
+            self.update_status(
+                "Setting up embeddings",
+                80,
+                "Embedding model initialized successfully"
             )
             
             # Initialize vector store
@@ -240,6 +286,7 @@ class RAGService:
             
             # Detect file type
             mime_type = magic.from_file(str(file_path), mime=True)
+            logger.info(f"Detected MIME type: {mime_type}")
             
             if mime_type not in self.supported_mimetypes:
                 raise HTTPException(
@@ -249,27 +296,84 @@ class RAGService:
             
             # Extract text using appropriate method
             text = self.supported_mimetypes[mime_type](file_path)
+            if not text.strip():
+                raise ValueError("No text could be extracted from the document")
             
-            # Create text chunks
+            logger.info(f"Extracted {len(text)} characters of text")
+            
+            # Determine optimal chunk size and overlap based on document type and content
+            chunk_size = 1000  # Default
+            chunk_overlap = 200  # Default
+            
+            # Adjust based on document type and content length
+            if mime_type == 'application/pdf':
+                # PDFs often have natural page breaks, use larger chunks
+                chunk_size = 1500
+                chunk_overlap = 300
+            elif mime_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+                # Word docs might have more structured content
+                chunk_size = 1200
+                chunk_overlap = 250
+            elif len(text) < 5000:
+                # For small documents, use smaller chunks
+                chunk_size = 500
+                chunk_overlap = 100
+            
+            # Create text splitter with custom settings
             text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+                length_function=len,
+                separators=["\n\n", "\n", " ", ""]  # Try natural breaks first
             )
+            
+            # Split text into chunks
             texts = text_splitter.split_text(text)
+            logger.info(f"Split text into {len(texts)} chunks (size: {chunk_size}, overlap: {chunk_overlap})")
             
-            # Add to vector store
-            self.vector_store.add_texts(
-                texts,
-                metadatas=[{
-                    "source": str(file_path),
-                    "doc_id": doc_id,
-                    "chunk_id": i,
-                    "total_chunks": len(texts)
-                } for i in range(len(texts))],
-                ids=[f"{doc_id}_{i}" for i in range(len(texts))]
-            )
+            # Add to vector store with improved metadata
+            try:
+                self.vector_store.add_texts(
+                    texts,
+                    metadatas=[{
+                        "source": str(file_path),
+                        "doc_id": doc_id,
+                        "chunk_id": i,
+                        "total_chunks": len(texts),
+                        "chunk_size": chunk_size,
+                        "chunk_overlap": chunk_overlap,
+                        "mime_type": mime_type,
+                        "filename": file.filename
+                    } for i in range(len(texts))],
+                    ids=[f"{doc_id}_{i}" for i in range(len(texts))]
+                )
+                
+                # Verify document was indexed with MMR search
+                retriever = self.vector_store.as_retriever(
+                    search_type="mmr",
+                    search_kwargs={
+                        "filter": {"doc_id": doc_id},
+                        "k": 2,
+                        "fetch_k": 10,
+                        "lambda_mult": 0.7
+                    }
+                )
+                verification_docs = retriever.get_relevant_documents("test")
+                if not verification_docs:
+                    raise ValueError("Document was not properly indexed in vector store")
+                    
+                logger.info(f"Successfully indexed {len(texts)} chunks in vector store")
+                
+            except Exception as e:
+                logger.error(f"Error adding document to vector store: {e}")
+                # Clean up the saved file
+                file_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error indexing document: {str(e)}"
+                )
             
-            # Initialize conversation history as a list instead of ConversationBufferMemory
+            # Initialize conversation history
             self.conversations[doc_id] = []
             
             # Create and return document metadata
@@ -405,6 +509,91 @@ Answer:"""
             logger.error(f"Error processing query for document {document_id}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
     
+    async def process_query_multi(self, document_ids: List[str], query: str) -> Dict[str, Any]:
+        """Process a query across multiple documents using RAG."""
+        await self.ensure_initialized()
+        try:
+            logger.info(f"Processing query across documents {document_ids}: {query}")
+            
+            # Create a document-specific retriever with MMR search
+            retriever = self.vector_store.as_retriever(
+                search_type="mmr",  # Use MMR for better diversity in results
+                search_kwargs={
+                    "filter": {"doc_id": {"$in": document_ids}},
+                    "k": 6,  # Get more candidates for MMR
+                    "fetch_k": 20,  # Fetch more documents to select from
+                    "lambda_mult": 0.7  # Balance between relevance and diversity
+                }
+            )
+            
+            # Get relevant documents
+            relevant_docs = retriever.get_relevant_documents(query)
+            logger.info(f"Retrieved {len(relevant_docs)} total chunks across all documents")
+            
+            # Create context from relevant documents
+            context = "\n\n".join([doc.page_content for doc in relevant_docs])
+            logger.info(f"Combined context length: {len(context)} characters")
+            
+            # Create prompt
+            prompt = f"""Use the following pieces of context to answer the question. If you cannot find the answer in the context, say "I don't have enough information to answer that."
+
+Context:
+{context}
+
+Question: {query}
+
+Answer:"""
+            
+            # Get response from model
+            response = self.chat_model.invoke(prompt)
+            logger.info(f"Raw model response type: {type(response)}")
+            logger.info(f"Raw model response: {response}")
+            
+            # Ensure response is a string
+            if isinstance(response, dict) and 'content' in response:
+                response_text = response['content']
+            elif isinstance(response, (list, tuple)) and len(response) > 0:
+                response_text = str(response[0])
+            elif hasattr(response, 'content'):
+                response_text = response.content
+            elif hasattr(response, 'text'):
+                response_text = response.text
+            else:
+                response_text = str(response)
+            
+            # Clean up response text
+            response_text = response_text.strip()
+            logger.info(f"Final response text: {response_text}")
+            
+            # Extract source information
+            sources = []
+            for doc in relevant_docs:
+                sources.append({
+                    "content": doc.page_content,
+                    "metadata": doc.metadata
+                })
+            
+            # Update conversation history for all involved documents
+            for doc_id in document_ids:
+                if doc_id not in self.conversations:
+                    self.conversations[doc_id] = []
+                
+                self.conversations[doc_id].extend([
+                    {"role": "user", "content": query},
+                    {"role": "assistant", "content": response_text}
+                ])
+            
+            logger.info(f"Query processed successfully across documents {document_ids}")
+            
+            return {
+                "response": response_text,
+                "sources": sources
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing query across documents {document_ids}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+
     def get_conversation_history(self, document_id: str) -> List[Dict]:
         """Get the conversation history for a specific document."""
         try:
@@ -412,45 +601,29 @@ Answer:"""
         except Exception as e:
             logger.error(f"Error retrieving conversation history for document {document_id}: {str(e)}")
             raise HTTPException(status_code=500, detail="Error retrieving conversation history")
-    
-    async def summarize_document(self, document_id: str) -> Tuple[str, List[Dict]]:
-        """Generate a summary for a specific document."""
-        await self.ensure_initialized()
+
+    async def delete_document(self, document_id: str) -> None:
+        """Delete a document from both the file system and vector database."""
         try:
-            logger.info(f"Generating summary for document {document_id}")
+            logger.info(f"Deleting document {document_id}")
             
-            # Get all chunks for the document
-            retriever = self.vector_store.as_retriever(
-                search_kwargs={
-                    "filter": {"doc_id": document_id},
-                    "k": 100  # Get more chunks for summarization
-                }
+            # Find and delete the file from the file system
+            for file_path in self.documents_dir.glob(f"{document_id}_*"):
+                if file_path.is_file():
+                    file_path.unlink()
+                    logger.info(f"Deleted file: {file_path}")
+            
+            # Delete document chunks from vector store
+            self.vector_store._collection.delete(
+                where={"doc_id": document_id}
             )
             
-            # Create a summarization prompt
-            summary_query = "Please provide a comprehensive summary of this document."
+            # Remove conversation history
+            if document_id in self.conversations:
+                del self.conversations[document_id]
             
-            # Use the same QA chain for summarization
-            qa_chain = ConversationalRetrievalChain.from_llm(
-                llm=self.chat_model,
-                retriever=retriever,
-                return_source_documents=True
-            )
-            
-            # Generate summary
-            response = qa_chain.invoke({"query": summary_query})
-            
-            # Extract source information
-            sources = []
-            for doc in response["source_documents"]:
-                sources.append({
-                    "content": doc.page_content,
-                    "metadata": doc.metadata
-                })
-            
-            logger.info(f"Summary generated successfully for document {document_id}")
-            return response["result"], sources
+            logger.info(f"Document {document_id} deleted successfully")
             
         except Exception as e:
-            logger.error(f"Error generating summary for document {document_id}: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error generating summary: {str(e)}") 
+            logger.error(f"Error deleting document {document_id}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}") 
