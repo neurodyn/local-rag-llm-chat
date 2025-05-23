@@ -6,169 +6,155 @@
     <title>Local RAG System</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="container mx-auto px-4 py-8">
-        <h1 class="text-3xl font-bold mb-8">Local RAG System</h1>
-        
-        <!-- Document Upload Section -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
-            <h2 class="text-xl font-semibold mb-4">Upload Document</h2>
-            <form id="uploadForm" class="space-y-4">
-                <div class="flex items-center space-x-4">
-                    <input type="file" 
-                           name="file" 
-                           class="block w-full text-sm text-gray-500
-                                  file:mr-4 file:py-2 file:px-4
-                                  file:rounded-md file:border-0
-                                  file:text-sm file:font-semibold
-                                  file:bg-blue-50 file:text-blue-700
-                                  hover:file:bg-blue-100"
+        <!-- Initialization Status -->
+        <div id="initStatus" class="mb-8 p-6 bg-white rounded-lg shadow-md hidden">
+            <div class="space-y-4">
+                <div class="flex items-center">
+                    <div class="loading-spinner mr-4"></div>
+                    <div>
+                        <h3 class="text-xl font-semibold">System Initializing</h3>
+                        <p id="initStatusMessage" class="text-gray-600 mt-1">Preparing system...</p>
+                    </div>
+                </div>
+                
+                <!-- Progress Bar -->
+                <div class="space-y-2">
+                    <div class="flex justify-between text-sm text-gray-600">
+                        <span id="currentStep">Checking system...</span>
+                        <span id="progressPercent">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div id="progressBar" 
+                             class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                             style="width: 0%">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Detailed Status -->
+                <div class="mt-4 p-4 bg-gray-50 rounded-md">
+                    <h4 class="font-medium text-gray-700 mb-2">Initialization Progress</h4>
+                    <ul id="initSteps" class="space-y-2 text-sm">
+                        <li class="flex items-center text-gray-500">
+                            <span class="w-4 h-4 mr-2 rounded-full border-2 border-gray-300"></span>
+                            Checking model files
+                        </li>
+                        <li class="flex items-center text-gray-500">
+                            <span class="w-4 h-4 mr-2 rounded-full border-2 border-gray-300"></span>
+                            Downloading Mistral model
+                        </li>
+                        <li class="flex items-center text-gray-500">
+                            <span class="w-4 h-4 mr-2 rounded-full border-2 border-gray-300"></span>
+                            Setting up embeddings
+                        </li>
+                        <li class="flex items-center text-gray-500">
+                            <span class="w-4 h-4 mr-2 rounded-full border-2 border-gray-300"></span>
+                            Configuring vector store
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Error Message (if any) -->
+                <div id="initError" class="hidden mt-4 p-4 bg-red-50 text-red-700 rounded-md">
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content (hidden during initialization) -->
+        <div id="mainContent" class="hidden">
+            <h1 class="text-3xl font-bold mb-8">Local RAG System</h1>
+            
+            <!-- Document Upload Section -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                <h2 class="text-xl font-semibold mb-4">Upload Document</h2>
+                <div class="mb-4 text-sm text-gray-600">
+                    Supported file types:
+                    <ul class="list-disc list-inside ml-4">
+                        <li>PDF files (.pdf)</li>
+                        <li>Word documents (.docx)</li>
+                        <li>Text files (.txt)</li>
+                    </ul>
+                </div>
+                <form id="uploadForm" class="space-y-4">
+                    <div class="flex items-center space-x-4">
+                        <input type="file" 
+                               name="file" 
+                               accept=".pdf,.docx,.txt"
+                               class="block w-full text-sm text-gray-500
+                                      file:mr-4 file:py-2 file:px-4
+                                      file:rounded-md file:border-0
+                                      file:text-sm file:font-semibold
+                                      file:bg-blue-50 file:text-blue-700
+                                      hover:file:bg-blue-100"
+                               required>
+                        <button type="submit" 
+                                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                            Upload
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Document List Section -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                <h2 class="text-xl font-semibold mb-4">Documents</h2>
+                <div class="space-y-2">
+                    {% for document in documents %}
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-md">
+                        <span class="font-medium">{{ document.filename }}</span>
+                        <button onclick="selectDocument('{{ document.id }}')"
+                                class="px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700">
+                            Select
+                        </button>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Chat Section -->
+            <div id="chatSection" class="bg-white rounded-lg shadow-md p-6" style="display: none;">
+                <h2 class="text-xl font-semibold mb-4">Chat</h2>
+                <div id="chatMessages" class="space-y-4 mb-4 h-64 overflow-y-auto p-4 bg-gray-50 rounded-md">
+                    <!-- Messages will be inserted here -->
+                </div>
+                <form id="chatForm" class="flex space-x-4">
+                    <input type="text" 
+                           id="messageInput"
+                           placeholder="Type your message..."
+                           class="flex-1 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                            required>
-                    <button type="submit" 
-                            class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
-                        Upload
+                    <button type="submit"
+                            class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                        Send
                     </button>
-                </div>
-            </form>
-        </div>
-
-        <!-- Document List Section -->
-        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
-            <h2 class="text-xl font-semibold mb-4">Documents</h2>
-            <div class="space-y-2">
-                {% for document in documents %}
-                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-md">
-                    <span class="font-medium">{{ document.filename }}</span>
-                    <button onclick="selectDocument('{{ document.id }}')"
-                            class="px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700">
-                        Select
+                    <button type="button"
+                            onclick="summarizeDocument()"
+                            class="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">
+                        Summarize
                     </button>
-                </div>
-                {% endfor %}
+                </form>
             </div>
-        </div>
-
-        <!-- Chat Section -->
-        <div id="chatSection" class="bg-white rounded-lg shadow-md p-6" style="display: none;">
-            <h2 class="text-xl font-semibold mb-4">Chat</h2>
-            <div id="chatMessages" class="space-y-4 mb-4 h-64 overflow-y-auto p-4 bg-gray-50 rounded-md">
-                <!-- Messages will be inserted here -->
-            </div>
-            <form id="chatForm" class="flex space-x-4">
-                <input type="text" 
-                       id="messageInput"
-                       placeholder="Type your message..."
-                       class="flex-1 px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                       required>
-                <button type="submit"
-                        class="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
-                    Send
-                </button>
-                <button type="button"
-                        onclick="summarizeDocument()"
-                        class="px-6 py-2 bg-green-600 text-white rounded-md hover:bg-green-700">
-                    Summarize
-                </button>
-            </form>
         </div>
     </div>
 
-    <script>
-        let currentDocumentId = null;
-
-        // Handle file upload
-        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            
-            try {
-                const response = await fetch('/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                const result = await response.json();
-                if (result.error) {
-                    alert(result.error);
-                } else {
-                    location.reload();
-                }
-            } catch (error) {
-                alert('Error uploading document');
-            }
-        });
-
-        // Handle document selection
-        function selectDocument(documentId) {
-            currentDocumentId = documentId;
-            document.getElementById('chatSection').style.display = 'block';
-            document.getElementById('chatMessages').innerHTML = '';
-        }
-
-        // Handle chat submission
-        document.getElementById('chatForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            if (!currentDocumentId) return;
-
-            const messageInput = document.getElementById('messageInput');
-            const message = messageInput.value;
-            messageInput.value = '';
-
-            // Add user message to chat
-            addMessage('user', message);
-
-            try {
-                const response = await fetch(`/chat/${currentDocumentId}`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: `query=${encodeURIComponent(message)}`
-                });
-                const result = await response.json();
-                
-                if (result.error) {
-                    addMessage('error', result.error);
-                } else {
-                    addMessage('assistant', result.response);
-                }
-            } catch (error) {
-                addMessage('error', 'Error processing your request');
-            }
-        });
-
-        // Handle document summarization
-        async function summarizeDocument() {
-            if (!currentDocumentId) return;
-
-            try {
-                const response = await fetch(`/summarize/${currentDocumentId}`);
-                const result = await response.json();
-                
-                if (result.error) {
-                    addMessage('error', result.error);
-                } else {
-                    addMessage('system', 'Document Summary:');
-                    addMessage('assistant', result.summary);
-                }
-            } catch (error) {
-                addMessage('error', 'Error generating summary');
-            }
-        }
-
-        // Add message to chat
-        function addMessage(role, content) {
-            const messagesDiv = document.getElementById('chatMessages');
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `p-3 rounded-md ${
-                role === 'user' ? 'bg-blue-100' :
-                role === 'assistant' ? 'bg-green-100' :
-                role === 'system' ? 'bg-gray-100' : 'bg-red-100'
-            }`;
-            messageDiv.textContent = content;
-            messagesDiv.appendChild(messageDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
-    </script>
+    <script src="/static/main.js"></script>
 </body>
 </html> 

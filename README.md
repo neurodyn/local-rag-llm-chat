@@ -204,3 +204,86 @@ TEMPERATURE=0.7            # Model temperature (0.0 - 1.0)
 2. Keep your Hugging Face token secure
 3. Use appropriate file permissions for the data directories
 4. Consider using a secrets manager for production deployments 
+
+## Hugging Face Setup
+
+### Getting Your Token
+
+1. Create a Hugging Face account at [huggingface.co](https://huggingface.co) if you don't have one
+2. Go to your [Access Tokens](https://huggingface.co/settings/tokens) page
+3. Click "New token" and create a token with `read` access
+4. Copy your token for use in the next steps
+
+### Setting Up Token Access
+
+There are two ways to configure your Hugging Face token:
+
+1. **Using the CLI (Recommended)**:
+   ```bash
+   # Install huggingface_cli if not already installed
+   pip install -U "huggingface_hub[cli]"
+   
+   # Login using the CLI
+   huggingface-cli login
+   # Enter your token when prompted
+   ```
+
+2. **Using Environment Variables**:
+   - Add to your `.env` file:
+     ```bash
+     HUGGINGFACE_TOKEN=your_token_here
+     ```
+   - Or export in your shell:
+     ```bash
+     export HUGGINGFACE_TOKEN=your_token_here
+     ```
+
+### Accessing Mistral MLX Model
+
+The system uses the quantized Mistral-7B model optimized for MLX:
+```
+mlx-community/Mistral-7B-Instruct-v0.3-4bit
+```
+
+To ensure you have access:
+
+1. Visit the [model page](https://huggingface.co/mlx-community/Mistral-7B-Instruct-v0.3-4bit)
+2. Accept the model's terms of use on the Hugging Face website
+3. The system will automatically download the model on first use
+
+### Troubleshooting Token Issues
+
+If you encounter authentication issues:
+
+1. Verify your token is correct:
+   ```bash
+   huggingface-cli whoami
+   ```
+
+2. Check token permissions:
+   ```bash
+   huggingface-cli list-models --token your_token_here
+   ```
+
+3. Common issues and solutions:
+   - "Token not found": Ensure your token is properly set in `.env` or environment
+   - "Permission denied": Make sure you've accepted the model's terms of use
+   - "Token has insufficient permissions": Create a new token with `read` access
+   - "Token expired": Generate a new token on Hugging Face website
+
+4. If using the CLI doesn't work, try:
+   ```bash
+   # Clear any existing token
+   huggingface-cli logout
+   
+   # Login again
+   huggingface-cli login
+   ```
+
+### Security Best Practices
+
+1. Never commit your token to version control
+2. Rotate your token periodically
+3. Use read-only tokens for deployment
+4. Set appropriate environment variables in your deployment environment
+5. Consider using a secrets manager for production deployments 
