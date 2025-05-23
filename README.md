@@ -80,11 +80,18 @@ HUGGINGFACE_TOKEN=your_token_here
 ```
 
 6. Run the application:
+
+For local development:
 ```bash
 uvicorn app.main:app --reload
 ```
 
-The application will be available at `http://localhost:8000`
+For network access (e.g., accessing from other devices on the network):
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The application will be available at `http://localhost:8000` for local access, or `http://<your-ip-address>:8000` for network access.
 
 ## Project Structure
 
