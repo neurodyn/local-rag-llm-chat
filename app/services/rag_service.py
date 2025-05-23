@@ -16,6 +16,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.messages import HumanMessage, AIMessage
 from fastapi import UploadFile, HTTPException
+from starlette.concurrency import run_in_threadpool
 from ..models.document import Document
 from unstructured.partition.pdf import partition_pdf
 
@@ -122,7 +123,7 @@ class RAGService:
                     detail=f"Error processing text file: {str(e)}"
                 )
 
-    def update_status(self, step: str, progress: int = 0, details: str = ""):
+    async def update_status(self, step: str, progress: int = 0, details: str = ""):
         """Update initialization status with progress information."""
         steps = {
             "Checking model files": 0,
@@ -132,8 +133,13 @@ class RAGService:
             "Initialization complete": 4
         }
         
+        # Run the state update in a threadpool to ensure thread safety
+        await run_in_threadpool(self._update_status_sync, step, steps.get(step, 0), progress, details)
+        
+    def _update_status_sync(self, step: str, step_number: int, progress: int, details: str):
+        """Synchronous helper for updating status in a thread-safe way."""
         self.initialization_progress["current_step"] = step
-        self.initialization_progress["current_step_number"] = steps.get(step, 0)
+        self.initialization_progress["current_step_number"] = step_number
         self.initialization_progress["download_progress"] = progress
         self.initialization_progress["detailed_status"] = details
         self.initialization_status = f"{step} - {details}"
@@ -146,7 +152,7 @@ class RAGService:
                 return
 
             # Step 1: Check model cache and download if needed
-            self.update_status(
+            await self.update_status(
                 "Checking model files",
                 10,
                 "Verifying model cache and downloading if needed..."
@@ -158,23 +164,25 @@ class RAGService:
             # Get model file sizes for progress tracking
             api = HfApi()
             try:
-                self.update_status(
+                await self.update_status(
                     "Checking model files",
                     20,
                     "Checking model repository information..."
                 )
-                model_files = api.list_repo_files(model_id)
-                total_size = sum(
-                    api.get_repo_info(model_id).siblings[i].size 
-                    for i, file in enumerate(model_files) 
-                    if file.endswith('.bin') or file.endswith('.json')
+                model_files = await run_in_threadpool(api.list_repo_files, model_id)
+                total_size = await run_in_threadpool(
+                    lambda: sum(
+                        api.get_repo_info(model_id).siblings[i].size 
+                        for i, file in enumerate(model_files) 
+                        if file.endswith('.bin') or file.endswith('.json')
+                    )
                 )
             except Exception as e:
                 logger.warning(f"Could not get model file sizes: {e}")
                 total_size = None
 
             # Download and initialize MLX model
-            self.update_status(
+            await self.update_status(
                 "Downloading Mistral model",
                 30,
                 "Starting model download..."
@@ -182,18 +190,19 @@ class RAGService:
             
             try:
                 # Initialize MLX model through LangChain
-                self.update_status(
+                await self.update_status(
                     "Downloading Mistral model",
                     40,
                     "Downloading model files..."
                 )
                 
-                self.llm = MLXPipeline.from_model_id(
+                self.llm = await run_in_threadpool(
+                    MLXPipeline.from_model_id,
                     model_id,
                     pipeline_kwargs={"max_tokens": 512, "temp": 0.7}
                 )
                 
-                self.update_status(
+                await self.update_status(
                     "Downloading Mistral model",
                     60,
                     "Model downloaded, setting up MLX pipeline..."
@@ -203,7 +212,7 @@ class RAGService:
                 self.chat_model = ChatMLX(llm=self.llm)
                 
             except Exception as e:
-                self.update_status(
+                await self.update_status(
                     "Error downloading model",
                     0,
                     f"Failed to download model: {str(e)}"
@@ -211,37 +220,41 @@ class RAGService:
                 raise
 
             # Initialize embeddings
-            self.update_status(
+            await self.update_status(
                 "Setting up embeddings",
                 70,
                 "Downloading and initializing embedding model..."
             )
             
-            self.embeddings = HuggingFaceEmbeddings(
-                model_name=embedding_model_id,
-                model_kwargs={'device': 'cpu'}
+            self.embeddings = await run_in_threadpool(
+                lambda: HuggingFaceEmbeddings(
+                    model_name=embedding_model_id,
+                    model_kwargs={'device': 'cpu'}
+                )
             )
             
-            self.update_status(
+            await self.update_status(
                 "Setting up embeddings",
                 80,
                 "Embedding model initialized successfully"
             )
             
             # Initialize vector store
-            self.update_status(
+            await self.update_status(
                 "Configuring vector store",
                 90,
                 "Setting up document storage..."
             )
             
             # Initialize or load existing vector store
-            self.vector_store = Chroma(
-                persist_directory=str(self.vector_store_dir),
-                embedding_function=self.embeddings
+            self.vector_store = await run_in_threadpool(
+                lambda: Chroma(
+                    persist_directory=str(self.vector_store_dir),
+                    embedding_function=self.embeddings
+                )
             )
             
-            self.update_status(
+            await self.update_status(
                 "Initialization complete",
                 100,
                 "System is ready to use"

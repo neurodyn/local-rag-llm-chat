@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, Request, Body
+from fastapi import FastAPI, UploadFile, File, Form, Request, Body, BackgroundTasks
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -48,11 +48,12 @@ async def get_status() -> Dict[str, Any]:
     return rag_service.get_initialization_status()
 
 @app.post("/initialize")
-async def initialize_system():
+async def initialize_system(background_tasks: BackgroundTasks):
     """Start the system initialization process."""
     if not rag_service.is_initialized:
-        await rag_service.initialize()
-    return {"status": "Initialization complete" if rag_service.is_initialized else "Initialization started"}
+        background_tasks.add_task(rag_service.initialize)
+        return {"status": "Initialization started"}
+    return {"status": "Already initialized"}
 
 @app.post("/documents/")
 async def upload_document(file: UploadFile = File(...)):
