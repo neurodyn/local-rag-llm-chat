@@ -1,6 +1,6 @@
 # Local Privacy Preserving RAG System with MLX
 
-A web-based RAG (Retrieval Augmented Generation) system that uses MLX for accelerated LLM inference on Mac laptops. The system allows users to upload documents, process them for RAG, and query multiple documents simultaneously using a chat interface.
+A web-based RAG (Retrieval Augmented Generation) system that runs a LLM locally to provide privacy protected inference.  The system allows users to upload documents, process them for RAG, and query multiple documents simultaneously using a chat interface. The system uses MLX for accelerated LLM inference on Apple M-series computers.
 
 ## Features
 
