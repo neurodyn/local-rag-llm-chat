@@ -11,6 +11,10 @@ A web-based RAG (Retrieval Augmented Generation) system that uses MLX for accele
 - FastAPI-based web interface with real-time updates
 - Comprehensive error handling and logging
 
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
 ## Requirements
 
 ### System Dependencies
