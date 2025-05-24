@@ -98,24 +98,6 @@ Access at `http://localhost:8000` (local) or `http://<your-ip-address>:8000` (ne
 # Required Settings
 HUGGINGFACE_TOKEN=your_token_here
 
-# Model Configuration
-MODEL_NAME=mlx-community/Mistral-7B-Instruct-v0.3-4bit
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-
-# Server Configuration
-HOST=0.0.0.0
-PORT=8000
-LOG_LEVEL=INFO
-
-# Storage Configuration
-VECTOR_STORE_DIR=data/vectorstore
-DOCUMENTS_DIR=data/documents
-
-# RAG Configuration
-CHUNK_SIZE=1000            # Characters per chunk
-CHUNK_OVERLAP=200         # Overlap between chunks
-MAX_TOKENS=512           # Maximum response tokens
-TEMPERATURE=0.7          # Response randomness (0.0-1.0)
 ```
 
 ## Security Notes
