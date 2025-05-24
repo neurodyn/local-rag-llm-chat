@@ -51,10 +51,6 @@ class RAGService:
         self.vector_store = None
         self.conversations = {}
         
-        # If initialized, load the models
-        if self.is_initialized:
-            self._load_models()
-        
         # Supported file types
         self.supported_mimetypes = {
             'application/pdf': self._extract_pdf_text,
@@ -352,6 +348,9 @@ class RAGService:
         """Ensure the service is initialized before use."""
         if not self.is_initialized:
             await self.initialize()
+        elif self.llm is None or self.chat_model is None or self.embeddings is None or self.vector_store is None:
+            # If initialized but models aren't loaded, load them
+            await self._load_models()
 
     async def process_document(self, file: UploadFile) -> Document:
         """Process an uploaded document and add it to the vector store."""

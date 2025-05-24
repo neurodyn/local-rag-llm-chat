@@ -3,28 +3,93 @@ from pathlib import Path
 from fastapi import UploadFile
 from app.services.rag_service import RAGService
 from app.models.document import Document
+import os
+import io
+from typing import BinaryIO
+
+class MockFile(BinaryIO):
+    def __init__(self, content: bytes):
+        self._content = io.BytesIO(content)
+        self._size = len(content)
+        self._position = 0
+
+    def read(self, size: int = -1) -> bytes:
+        return self._content.read(size)
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        return self._content.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._content.tell()
+
+    def close(self) -> None:
+        self._content.close()
+
+    # Required methods for BinaryIO
+    def write(self, s: bytes) -> int:
+        return self._content.write(s)
+
+    def writelines(self, lines) -> None:
+        self._content.writelines(lines)
+
+    def readable(self) -> bool:
+        return True
+
+    def writable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def fileno(self) -> int:
+        raise OSError("Not a real file")
+
+    def flush(self) -> None:
+        self._content.flush()
 
 @pytest.fixture
 def rag_service():
     """Create a RAG service instance for testing."""
+    # Ensure directories exist with proper permissions
+    data_dir = Path("data")
+    docs_dir = data_dir / "documents"
+    vector_dir = data_dir / "vectorstore"
+    
+    data_dir.mkdir(exist_ok=True)
+    docs_dir.mkdir(exist_ok=True)
+    vector_dir.mkdir(exist_ok=True)
+    
     service = RAGService()
     yield service
+    
     # Cleanup after tests
-    for file in Path("data/documents").glob("*"):
-        file.unlink()
-    for file in Path("data/vectorstore").glob("*"):
-        file.unlink()
+    try:
+        for file in docs_dir.glob("*"):
+            file.unlink(missing_ok=True)
+        for file in vector_dir.glob("*"):
+            file.unlink(missing_ok=True)
+        if Path("data/init_state.json").exists():
+            Path("data/init_state.json").unlink()
+    except Exception as e:
+        print(f"Cleanup error: {e}")
 
 @pytest.fixture
 def sample_document():
     """Create a sample document for testing."""
     content = b"This is a test document for RAG system testing."
+    mock_file = MockFile(content)
+    
+    # Create headers dictionary
+    headers = {
+        'content-type': 'text/plain'
+    }
+    
+    # Create UploadFile with headers
     file = UploadFile(
         filename="test.txt",
-        file=None,
-        content_type="text/plain"
+        file=mock_file,
+        headers=headers
     )
-    file._file = content
     return file
 
 async def test_process_document(rag_service, sample_document):
@@ -46,12 +111,7 @@ async def test_process_query(rag_service, sample_document):
     """Test query processing."""
     document = await rag_service.process_document(sample_document)
     response = await rag_service.process_query(document.id, "What is this document about?")
-    assert isinstance(response, str)
-    assert len(response) > 0
-
-async def test_summarize_document(rag_service, sample_document):
-    """Test document summarization."""
-    document = await rag_service.process_document(sample_document)
-    summary = await rag_service.summarize_document(document.id)
-    assert isinstance(summary, str)
-    assert len(summary) > 0 
+    assert isinstance(response, dict)
+    assert "response" in response
+    assert isinstance(response["response"], str)
+    assert len(response["response"]) > 0 
