@@ -15,6 +15,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_community.tools import DuckDuckGoSearchRun
 from fastapi import UploadFile, HTTPException
 from starlette.concurrency import run_in_threadpool
 from ..models.document import Document
@@ -50,6 +51,7 @@ class RAGService:
         self.embeddings = None
         self.vector_store = None
         self.conversations = {}
+        self.search_tool = None
         
         # Supported file types
         self.supported_mimetypes = {
@@ -349,8 +351,33 @@ class RAGService:
         if not self.is_initialized:
             await self.initialize()
         elif self.llm is None or self.chat_model is None or self.embeddings is None or self.vector_store is None:
-            # If initialized but models aren't loaded, load them
             await self._load_models()
+            
+        # Initialize search tool if not already initialized
+        if self.search_tool is None:
+            self.search_tool = DuckDuckGoSearchRun()
+
+    def list_documents(self) -> List[Document]:
+        """List all processed documents."""
+        try:
+            documents = []
+            for file_path in self.documents_dir.glob("*"):
+                if file_path.is_file():
+                    doc_id = file_path.name.split("_")[0]
+                    filename = "_".join(file_path.name.split("_")[1:])
+                    documents.append(
+                        Document(
+                            id=doc_id,
+                            filename=filename,
+                            upload_time=datetime.fromtimestamp(file_path.stat().st_mtime),
+                            content_type="application/octet-stream",
+                            vector_store_id=doc_id
+                        )
+                    )
+            return documents
+        except Exception as e:
+            logger.error(f"Error listing documents: {str(e)}")
+            raise HTTPException(status_code=500, detail="Error listing documents")
 
     async def process_document(self, file: UploadFile) -> Document:
         """Process an uploaded document and add it to the vector store."""
@@ -475,151 +502,82 @@ class RAGService:
         except Exception as e:
             logger.error(f"Error processing document {file.filename}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
-    
-    def list_documents(self) -> List[Document]:
-        """List all processed documents."""
-        try:
-            documents = []
-            for file_path in self.documents_dir.glob("*"):
-                if file_path.is_file():
-                    doc_id = file_path.name.split("_")[0]
-                    filename = "_".join(file_path.name.split("_")[1:])
-                    documents.append(
-                        Document(
-                            id=doc_id,
-                            filename=filename,
-                            upload_time=datetime.fromtimestamp(file_path.stat().st_mtime),
-                            content_type="application/octet-stream",
-                            vector_store_id=doc_id
-                        )
-                    )
-            return documents
-        except Exception as e:
-            logger.error(f"Error listing documents: {str(e)}")
-            raise HTTPException(status_code=500, detail="Error listing documents")
-    
-    async def process_query(self, document_id: str, query: str) -> Dict[str, Any]:
-        """Process a query for a specific document using RAG."""
-        await self.ensure_initialized()
-        try:
-            logger.info(f"Processing query for document {document_id}: {query}")
-            
-            # Create a document-specific retriever
-            retriever = self.vector_store.as_retriever(
-                search_kwargs={
-                    "filter": {"doc_id": document_id},
-                    "k": 4
-                }
-            )
-            
-            # Get relevant documents
-            relevant_docs = retriever.get_relevant_documents(query)
-            logger.info(f"Number of relevant documents retrieved: {len(relevant_docs)}")
-            
-            # Log each document's content and metadata
-            for i, doc in enumerate(relevant_docs):
-                logger.info(f"Document {i + 1} metadata: {doc.metadata}")
-                logger.info(f"Document {i + 1} content: {doc.page_content[:200]}...")  # First 200 chars
-            
-            # Create context from relevant documents
-            context = "\n\n".join([doc.page_content for doc in relevant_docs])
-            logger.info(f"Combined context length: {len(context)} characters")
-            
-            # Create prompt
-            prompt = f"""Use the following pieces of context to answer the question. If you cannot find the answer in the context, say "I don't have enough information to answer that."
 
-Context:
-{context}
+    def _extract_response_text(self, response) -> str:
+        """Helper method to extract text from model response."""
+        if isinstance(response, dict) and 'content' in response:
+            return response['content']
+        elif isinstance(response, (list, tuple)) and len(response) > 0:
+            return str(response[0])
+        elif hasattr(response, 'content'):
+            return response.content
+        elif hasattr(response, 'text'):
+            return response.text
+        else:
+            return str(response)
 
-Question: {query}
-
-Answer:"""
-            
-            # Get response from model
-            response = self.chat_model.invoke(prompt)
-            logger.info(f"Raw model response type: {type(response)}")
-            logger.info(f"Raw model response: {response}")
-            
-            # Ensure response is a string
-            if isinstance(response, dict) and 'content' in response:
-                response_text = response['content']
-                logger.info("Using response['content']")
-            elif isinstance(response, (list, tuple)) and len(response) > 0:
-                response_text = str(response[0])
-                logger.info("Using response[0]")
-            elif hasattr(response, 'content'):
-                response_text = response.content
-                logger.info("Using response.content")
-            elif hasattr(response, 'text'):
-                response_text = response.text
-                logger.info("Using response.text")
-            else:
-                response_text = str(response)
-                logger.info("Using str(response)")
-            
-            # Clean up response text
-            response_text = response_text.strip()
-            logger.info(f"Final response text: {response_text}")
-            
-            # Extract source information
-            sources = []
-            for doc in relevant_docs:
-                sources.append({
-                    "content": doc.page_content,
-                    "metadata": doc.metadata
-                })
-            
-            # Update conversation history using the proper method
-            if document_id not in self.conversations:
-                self.conversations[document_id] = []
-            
-            # Add messages to conversation history as a list instead
-            self.conversations[document_id].extend([
-                {"role": "user", "content": query},
-                {"role": "assistant", "content": response_text}
-            ])
-            
-            logger.info(f"Query processed successfully for document {document_id}")
-            
-            # Return structured response
-            return {
-                "response": response_text,
-                "sources": sources
-            }
-            
-        except Exception as e:
-            logger.error(f"Error processing query for document {document_id}: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
-    
     async def process_query_multi(self, document_ids: List[str], query: str) -> Dict[str, Any]:
         """Process a query across multiple documents using RAG."""
         await self.ensure_initialized()
         try:
             logger.info(f"Processing query across documents {document_ids}: {query}")
             
-            # Create a document-specific retriever with MMR search
-            retriever = self.vector_store.as_retriever(
-                search_type="mmr",  # Use MMR for better diversity in results
-                search_kwargs={
-                    "filter": {"doc_id": {"$in": document_ids}},
-                    "k": 6,  # Get more candidates for MMR
-                    "fetch_k": 20,  # Fetch more documents to select from
-                    "lambda_mult": 0.7  # Balance between relevance and diversity
-                }
-            )
+            # Check if this is a web search request
+            should_web_search = any(keyword in query.lower() for keyword in [
+                "search online", "search the internet","search the web", "search internet", "look up online",
+                "find online", "search for", "look for"
+            ])
             
-            # Get relevant documents
-            relevant_docs = retriever.get_relevant_documents(query)
-            logger.info(f"Retrieved {len(relevant_docs)} total chunks across all documents")
+            context_parts = []
+            sources = []
             
-            # Create context from relevant documents
-            context = "\n\n".join([doc.page_content for doc in relevant_docs])
-            logger.info(f"Combined context length: {len(context)} characters")
+            # If web search is requested, perform the search
+            if should_web_search:
+                try:
+                    logger.info("Performing web search")
+                    search_result = await run_in_threadpool(self.search_tool.run, query)
+                    if search_result:
+                        context_parts.append(f"Web Search Results:\n{search_result}")
+                        print(search_result)
+                        sources.append({
+                            "content": search_result,
+                            "metadata": {"source": "web_search", "engine": "DuckDuckGo"}
+                        })
+                        logger.info("Web search completed successfully")
+                except Exception as e:
+                    logger.error(f"Web search error: {e}")
+                    # Continue with document search even if web search fails
+            
+            # Get relevant documents from the vector store if document_ids are provided
+            if document_ids:
+                retriever = self.vector_store.as_retriever(
+                    search_type="mmr",
+                    search_kwargs={
+                        "filter": {"doc_id": {"$in": document_ids}},
+                        "k": 6,
+                        "fetch_k": 20,
+                        "lambda_mult": 0.7
+                    }
+                )
+                
+                relevant_docs = retriever.get_relevant_documents(query)
+                if relevant_docs:
+                    context_parts.append("Document Context:\n" + "\n\n".join([doc.page_content for doc in relevant_docs]))
+                    
+                    # Add document sources
+                    for doc in relevant_docs:
+                        sources.append({
+                            "content": doc.page_content,
+                            "metadata": doc.metadata
+                        })
+            
+            # Combine all context parts
+            context = "\n\n".join(context_parts) if context_parts else "No context available."
             
             # Create prompt
-            prompt = f"""Use the following pieces of context to answer the question. If you cannot find the answer in the context, say "I don't have enough information to answer that."
+            prompt = f"""Use the following information to answer the question. If you cannot find the answer in the provided information, say "I don't have enough information to answer that."
 
-Context:
+Information:
 {context}
 
 Question: {query}
@@ -628,32 +586,8 @@ Answer:"""
             
             # Get response from model
             response = self.chat_model.invoke(prompt)
-            logger.info(f"Raw model response type: {type(response)}")
-            logger.info(f"Raw model response: {response}")
-            
-            # Ensure response is a string
-            if isinstance(response, dict) and 'content' in response:
-                response_text = response['content']
-            elif isinstance(response, (list, tuple)) and len(response) > 0:
-                response_text = str(response[0])
-            elif hasattr(response, 'content'):
-                response_text = response.content
-            elif hasattr(response, 'text'):
-                response_text = response.text
-            else:
-                response_text = str(response)
-            
-            # Clean up response text
+            response_text = self._extract_response_text(response)
             response_text = response_text.strip()
-            logger.info(f"Final response text: {response_text}")
-            
-            # Extract source information
-            sources = []
-            for doc in relevant_docs:
-                sources.append({
-                    "content": doc.page_content,
-                    "metadata": doc.metadata
-                })
             
             # Update conversation history for all involved documents
             for doc_id in document_ids:

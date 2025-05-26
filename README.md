@@ -10,6 +10,22 @@ A web-based RAG (Retrieval Augmented Generation) system that runs a LLM locally 
 - Interactive chat interface with conversation history and source attribution
 - FastAPI-based web interface with real-time updates
 - Comprehensive error handling and logging
+- Web search integration using DuckDuckGo (no API key required)
+- Combined search results from both uploaded documents and web searches
+
+## Usage
+
+1. Open the web interface
+2. Upload documents
+3. Select documents using checkboxes
+4. Click "Start Chat with Selected Documents"
+5. Query documents and view responses with source attribution
+6. To search the web, include phrases like:
+   - "search online for..."
+   - "search the web for..."
+   - "look up online..."
+   - "search internet for..."
+   The system will automatically combine web search results with document context.
 
 ## License
 
@@ -49,6 +65,20 @@ Key packages (full list in `requirements.txt`):
 - Sentence Transformers for embeddings
 - Document processing tools (PyPDF2, python-docx, unstructured)
 
+### Checking MLX Version
+You can check your MLX version in several ways:
+```bash
+# Method 1: Using pip
+pip show mlx
+
+# Method 2: Using Python
+python -c "import mlx; print(mlx.__version__)"
+
+# Method 3: Check all ML-related package versions
+pip list | grep -i mlx
+```
+Make sure you have MLX version 0.25.2 installed.
+
 ## Setup
 
 1. Clone and setup environment:
@@ -84,20 +114,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 Access at `http://localhost:8000` (local) or `http://<your-ip-address>:8000` (network)
 
-## Usage
-
-1. Open the web interface
-2. Upload documents
-3. Select documents using checkboxes
-4. Click "Start Chat with Selected Documents"
-5. Query documents and view responses with source attribution
-
 ## Environment Configuration
 
 ```bash
 # Required Settings
 HUGGINGFACE_TOKEN=your_token_here
-
 ```
 
 ## Security Notes
