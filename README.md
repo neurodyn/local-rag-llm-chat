@@ -10,7 +10,9 @@ A web-based RAG (Retrieval Augmented Generation) system that runs a LLM locally 
 - Interactive chat interface with conversation history and source attribution
 - FastAPI-based web interface with real-time updates
 - Comprehensive error handling and logging
-- Web search integration using DuckDuckGo (no API key required)
+- Web search integration with multiple search engines:
+  - SerpAPI (recommended, requires API key)
+  - DuckDuckGo (currently experiencing rate limiting issues)
 - Combined search results from both uploaded documents and web searches
 
 ## Usage
@@ -64,6 +66,7 @@ Key packages (full list in `requirements.txt`):
 - ChromaDB for vector storage
 - Sentence Transformers for embeddings
 - Document processing tools (PyPDF2, python-docx, unstructured)
+- Web search tools (duckduckgo-search, google-search-results)
 
 ### Checking MLX Version
 You can check your MLX version in several ways:
@@ -91,17 +94,20 @@ conda activate mlx_p39
 
 2. Install dependencies (make sure we have the right mlx version):
 ```bash
-
 pip install -r requirements.txt
-pip install langchain-core
 ```
 
-3. Configure Hugging Face:
-- Get token from [Access Tokens](https://huggingface.co/settings/tokens)
-- Create `.env` file:
+3. Configure environment variables:
+- Create `.env` file with the following variables:
 ```bash
+# Required for model access
 HUGGINGFACE_TOKEN=your_token_here
+
+# Required for web search (recommended)
+SERPAPI_API_KEY=your_serpapi_key_here
 ```
+- Get Hugging Face token from [Access Tokens](https://huggingface.co/settings/tokens)
+- Get SerpAPI key from [SerpAPI](https://serpapi.com/) (recommended for reliable web search)
 
 4. Run the application:
 ```bash
@@ -119,12 +125,15 @@ Access at `http://localhost:8000` (local) or `http://<your-ip-address>:8000` (ne
 ```bash
 # Required Settings
 HUGGINGFACE_TOKEN=your_token_here
+
+# Web Search Settings
+SERPAPI_API_KEY=your_serpapi_key_here  # Recommended for reliable web search
 ```
 
 ## Security Notes
 
 1. Never commit `.env` file or tokens to version control
-2. Keep Hugging Face token secure
+2. Keep Hugging Face and SerpAPI tokens secure
 3. Use appropriate file permissions
 4. Consider using secrets manager for production
 
