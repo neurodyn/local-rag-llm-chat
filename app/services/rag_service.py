@@ -656,11 +656,36 @@ class RAGService:
             context_parts = []
             sources = []
             
-            # If web search is requested, perform the search with retry logic
+            # If web search is requested, prepare the search query using context
             if should_web_search:
                 try:
-                    logger.info("Performing web search")
-                    # Add exponential backoff for rate limits
+                    logger.info("Preparing web search query with context")
+                    
+                    # Get conversation history for context
+                    conversation_history = []
+                    for doc_id in document_ids:
+                        if doc_id in self.conversations:
+                            conversation_history.extend(self.conversations[doc_id])
+                    
+                    # Use LLM to extract search query from context
+                    context_prompt = f"""Based on the conversation history and the current request, create a specific search query.
+                    If the request references previous information (like "this person" or "them"), use the context to make it specific.
+                    
+                    Conversation History:
+                    {conversation_history}
+                    
+                    Current Request: {query}
+                    
+                    Create a specific search query that captures what the user wants to search for.
+                    
+                    Do not be too strict. Do not use double quotes around words. Keep it open ended and simple.
+                    """
+                    
+                    search_query_response = self.chat_model.invoke(context_prompt)
+                    search_query = self._extract_response_text(search_query_response).strip()
+                    logger.info(f"Generated search query from context: {search_query}")
+                    
+                    # Perform the search with retry logic
                     max_retries = 3
                     base_delay = 2  # seconds
                     
@@ -672,12 +697,17 @@ class RAGService:
                                 logger.info(f"Retrying web search after {delay} seconds (attempt {attempt + 1}/{max_retries})")
                                 await asyncio.sleep(delay)
                             
-                            search_result = await run_in_threadpool(self.search_tool.run, query)
+                            search_result = await run_in_threadpool(self.search_tool.run, search_query)
                             if search_result:
                                 context_parts.append(f"Web Search Results:\n{search_result}")
                                 sources.append({
                                     "content": search_result,
-                                    "metadata": {"source": "web_search", "engine": self.search_engine}
+                                    "metadata": {
+                                        "source": "web_search",
+                                        "engine": self.search_engine,
+                                        "original_query": query,
+                                        "generated_query": search_query
+                                    }
                                 })
                                 logger.info("Web search completed successfully")
                                 break
