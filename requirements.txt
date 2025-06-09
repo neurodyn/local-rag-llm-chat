@@ -43,7 +43,4 @@ huggingface-hub[cli]==0.21.4
 
 # Testing
 pytest==8.1.1
-pytest-asyncio==0.23.5
-
-# Security
-pycryptodome==3.19.1 
+pytest-asyncio==0.23.5 
