@@ -18,6 +18,9 @@ class QueryRequest(BaseModel):
     query: str
     document_ids: List[str]
 
+class SearchEngineConfig(BaseModel):
+    search_engine: str
+
 app = FastAPI(title="Local RAG System")
 
 # Initialize templates
@@ -109,4 +112,22 @@ async def get_conversation_history(document_id: str):
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
+        )
+
+@app.post("/config/search-engine")
+async def set_search_engine(config: SearchEngineConfig):
+    """Set the search engine configuration."""
+    try:
+        logger.info(f"Changing search engine from {rag_service.search_engine} to {config.search_engine}")
+        rag_service.search_engine = config.search_engine
+        # Reinitialize search tool with new engine
+        rag_service.search_tool = None
+        await rag_service.ensure_initialized()
+        logger.info(f"Search engine successfully changed to {config.search_engine}")
+        return {"status": "success", "message": f"Search engine set to {config.search_engine}"}
+    except Exception as e:
+        logger.error(f"Error setting search engine: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)}
         ) 

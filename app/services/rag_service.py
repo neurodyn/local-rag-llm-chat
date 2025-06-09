@@ -9,8 +9,8 @@ from docx import Document as DocxDocument
 from PyPDF2 import PdfReader
 from huggingface_hub import hf_hub_download, HfApi
 from tqdm.auto import tqdm
-from langchain_community.llms.mlx_pipeline import MLXPipeline
-from langchain_community.chat_models.mlx import ChatMLX
+from .mlx_pipeline import MLXPipeline
+from .chat_mlx import ChatMLX
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
@@ -20,14 +20,126 @@ from fastapi import UploadFile, HTTPException
 from starlette.concurrency import run_in_threadpool
 from ..models.document import Document
 from unstructured.partition.pdf import partition_pdf
+import asyncio
+from duckduckgo_search import DDGS
+from serpapi import GoogleSearch
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+class WebSearch:
+    def __init__(self, search_engine: str = "duckduckgo"):
+        """
+        Initialize web search with specified engine.
+        
+        Args:
+            search_engine (str): Either "duckduckgo" or "serpapi"
+        """
+        self.search_engine = search_engine.lower()
+        logger.info(f"Initializing WebSearch with engine: {self.search_engine}")
+        
+        # Initialize search engine
+        if self.search_engine == "duckduckgo":
+            self.ddgs = DDGS()
+            logger.info("DuckDuckGo search engine initialized")
+        elif self.search_engine == "serpapi":
+            self.serpapi_key = os.getenv("SERPAPI_API_KEY")
+            if not self.serpapi_key:
+                logger.warning("SERPAPI_API_KEY not found in environment variables. Falling back to DuckDuckGo.")
+                self.search_engine = "duckduckgo"
+                self.ddgs = DDGS()
+                logger.info("Falling back to DuckDuckGo due to missing SERPAPI_API_KEY")
+            else:
+                logger.info("SerpAPI search engine initialized with API key")
+        else:
+            logger.warning(f"Invalid search engine '{search_engine}'. Defaulting to DuckDuckGo.")
+            self.search_engine = "duckduckgo"
+            self.ddgs = DDGS()
+            logger.info("Defaulting to DuckDuckGo due to invalid search engine")
+    
+    def run(self, query: str) -> str:
+        """
+        Run a web search query using the configured search engine.
+        
+        Args:
+            query (str): The search query
+            
+        Returns:
+            str: Formatted search results or empty string on error
+        """
+        try:
+            logger.info(f"Running search with engine: {self.search_engine}")
+            if self.search_engine == "duckduckgo":
+                return self._search_duckduckgo(query)
+            else:
+                return self._search_serpapi(query)
+        except Exception as e:
+            logger.error(f"Web search error: {e}")
+            return ""
+    
+    def _search_duckduckgo(self, query: str) -> str:
+        """Search using DuckDuckGo."""
+        try:
+            logger.info(f"Executing DuckDuckGo search for query: {query}")
+            results = list(self.ddgs.text(query, max_results=3))
+            logger.info(f"DuckDuckGo raw search results: {results}")
+            
+            formatted_results = []
+            for result in results:
+                formatted_results.append(f"{result['title']}\n{result['body']}")
+            
+            formatted_output = "\n\n".join(formatted_results) if formatted_results else "No results found."
+            logger.info(f"DuckDuckGo formatted output:\n{formatted_output}")
+            return formatted_output
+        except Exception as e:
+            logger.error(f"DuckDuckGo search error: {e}")
+            return ""
+    
+    def _search_serpapi(self, query: str) -> str:
+        """Search using SerpAPI."""
+        try:
+            if not self.serpapi_key:
+                logger.warning("No SERPAPI_API_KEY found. Falling back to DuckDuckGo.")
+                return self._search_duckduckgo(query)
+            
+            logger.info(f"Executing SerpAPI search for query: {query}")
+            search = GoogleSearch({
+                "q": query,
+                "api_key": self.serpapi_key,
+                "num": 3  # Number of results
+            })
+            results = search.get_dict()
+            logger.info(f"SerpAPI raw search results: {results}")
+            
+            formatted_results = []
+            if "organic_results" in results:
+                for result in results["organic_results"][:3]:
+                    title = result.get("title", "")
+                    snippet = result.get("snippet", "")
+                    formatted_results.append(f"{title}\n{snippet}")
+            
+            formatted_output = "\n\n".join(formatted_results) if formatted_results else "No results found."
+            logger.info(f"SerpAPI formatted output:\n{formatted_output}")
+            return formatted_output
+        except Exception as e:
+            logger.error(f"SerpAPI search error: {e}")
+            # Fall back to DuckDuckGo on error
+            logger.info("Falling back to DuckDuckGo search due to SerpAPI error")
+            return self._search_duckduckgo(query)
+
 class RAGService:
-    def __init__(self):
-        """Initialize the RAG service with basic setup."""
+    def __init__(self, search_engine: str = "duckduckgo"):
+        """
+        Initialize the RAG service with basic setup.
+        
+        Args:
+            search_engine (str): Either "duckduckgo" or "serpapi" for web search
+        """
         self.initialization_error = None
         self.initialization_status = "Not started"
         self.initialization_progress = {
@@ -52,6 +164,8 @@ class RAGService:
         self.vector_store = None
         self.conversations = {}
         self.search_tool = None
+        self.search_engine = search_engine.lower()
+        logger.info(f"RAGService initialized with search engine: {self.search_engine}")
         
         # Supported file types
         self.supported_mimetypes = {
@@ -92,7 +206,7 @@ class RAGService:
             self.llm = await run_in_threadpool(
                 MLXPipeline.from_model_id,
                 model_id,
-                pipeline_kwargs={"max_tokens": 512, "temp": 0.7}
+                pipeline_kwargs={"max_tokens": 512, "temperature": 0.7}
             )
             self.chat_model = ChatMLX(llm=self.llm)
             
@@ -264,7 +378,7 @@ class RAGService:
                 self.llm = await run_in_threadpool(
                     MLXPipeline.from_model_id,
                     model_id,
-                    pipeline_kwargs={"max_tokens": 512, "temp": 0.7}
+                    pipeline_kwargs={"max_tokens": 512, "temperature": 0.7}
                 )
                 
                 await self.update_status(
@@ -315,7 +429,8 @@ class RAGService:
             self.vector_store = await run_in_threadpool(
                 lambda: Chroma(
                     persist_directory=str(self.vector_store_dir),
-                    embedding_function=self.embeddings
+                    embedding_function=self.embeddings,
+                    collection_metadata={"hnsw:space": "cosine"}  # Use cosine similarity
                 )
             )
             
@@ -347,15 +462,17 @@ class RAGService:
         }
 
     async def ensure_initialized(self):
-        """Ensure the service is initialized before use."""
+        """Ensure the service is initialized."""
         if not self.is_initialized:
             await self.initialize()
         elif self.llm is None or self.chat_model is None or self.embeddings is None or self.vector_store is None:
             await self._load_models()
-            
-        # Initialize search tool if not already initialized
+        
+        # Initialize search tool if not already done
         if self.search_tool is None:
-            self.search_tool = DuckDuckGoSearchRun()
+            logger.info(f"Initializing new search tool with engine: {self.search_engine}")
+            self.search_tool = WebSearch(search_engine=self.search_engine)
+            logger.info(f"Search tool initialized with engine: {self.search_tool.search_engine}")
 
     def list_documents(self) -> List[Document]:
         """List all processed documents."""
@@ -505,7 +622,15 @@ class RAGService:
 
     def _extract_response_text(self, response) -> str:
         """Helper method to extract text from model response."""
-        if isinstance(response, dict) and 'content' in response:
+        if hasattr(response, 'generations'):
+            # Handle ChatResult
+            if len(response.generations) > 0:
+                generation = response.generations[0]
+                if hasattr(generation, 'message'):
+                    return generation.message.content
+                elif hasattr(generation, 'text'):
+                    return generation.text
+        elif isinstance(response, dict) and 'content' in response:
             return response['content']
         elif isinstance(response, (list, tuple)) and len(response) > 0:
             return str(response[0])
@@ -531,25 +656,45 @@ class RAGService:
             context_parts = []
             sources = []
             
-            # If web search is requested, perform the search
+            # If web search is requested, perform the search with retry logic
             if should_web_search:
                 try:
                     logger.info("Performing web search")
-                    search_result = await run_in_threadpool(self.search_tool.run, query)
-                    if search_result:
-                        context_parts.append(f"Web Search Results:\n{search_result}")
-                        print(search_result)
-                        sources.append({
-                            "content": search_result,
-                            "metadata": {"source": "web_search", "engine": "DuckDuckGo"}
-                        })
-                        logger.info("Web search completed successfully")
+                    # Add exponential backoff for rate limits
+                    max_retries = 3
+                    base_delay = 2  # seconds
+                    
+                    for attempt in range(max_retries):
+                        try:
+                            # Add delay that increases with each retry
+                            if attempt > 0:
+                                delay = base_delay * (2 ** (attempt - 1))
+                                logger.info(f"Retrying web search after {delay} seconds (attempt {attempt + 1}/{max_retries})")
+                                await asyncio.sleep(delay)
+                            
+                            search_result = await run_in_threadpool(self.search_tool.run, query)
+                            if search_result:
+                                context_parts.append(f"Web Search Results:\n{search_result}")
+                                sources.append({
+                                    "content": search_result,
+                                    "metadata": {"source": "web_search", "engine": self.search_engine}
+                                })
+                                logger.info("Web search completed successfully")
+                                break
+                        except Exception as search_error:
+                            if "Ratelimit" in str(search_error) and attempt < max_retries - 1:
+                                logger.warning(f"Web search rate limited (attempt {attempt + 1}/{max_retries})")
+                                continue
+                            else:
+                                logger.warning(f"Web search failed: {search_error}")
+                                context_parts.append("Note: Web search was unavailable due to rate limiting. Proceeding with available document context only.")
+                                break
                 except Exception as e:
                     logger.error(f"Web search error: {e}")
                     # Continue with document search even if web search fails
             
             # Get relevant documents from the vector store if document_ids are provided
-            if document_ids:
+            if document_ids and self.vector_store is not None:
                 retriever = self.vector_store.as_retriever(
                     search_type="mmr",
                     search_kwargs={

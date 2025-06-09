@@ -103,6 +103,24 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Search Engine Configuration -->
+            <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                <h2 class="text-xl font-semibold mb-4">Search Engine Configuration</h2>
+                <div class="flex items-center space-x-4">
+                    <select id="searchEngine" 
+                            class="px-4 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            onchange="updateSearchEngine(this.value)">
+                        <option value="duckduckgo">DuckDuckGo (Free)</option>
+                        <option value="serpapi">SerpAPI (Requires API Key)</option>
+                    </select>
+                    <div id="searchEngineStatus" class="text-sm text-gray-600"></div>
+                </div>
+                <div id="serpapiKeyInfo" class="mt-2 text-sm text-gray-600 hidden">
+                    <p>To use SerpAPI, add your API key to the .env file:</p>
+                    <code class="block mt-1 p-2 bg-gray-50 rounded">SERPAPI_API_KEY=your_api_key_here</code>
+                </div>
+            </div>
             
             <!-- Document Upload Section -->
             <div class="bg-white rounded-lg shadow-md p-6 mb-8">
@@ -201,5 +219,36 @@
     </div>
 
     <script src="/static/main.js"></script>
+    <script>
+        function updateSearchEngine(engine) {
+            fetch('/config/search-engine', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ search_engine: engine })
+            })
+            .then(response => response.json())
+            .then(data => {
+                const statusDiv = document.getElementById('searchEngineStatus');
+                if (data.status === 'success') {
+                    statusDiv.textContent = `✓ ${data.message}`;
+                    statusDiv.className = 'text-sm text-green-600';
+                } else {
+                    statusDiv.textContent = `✗ ${data.message}`;
+                    statusDiv.className = 'text-sm text-red-600';
+                }
+            })
+            .catch(error => {
+                const statusDiv = document.getElementById('searchEngineStatus');
+                statusDiv.textContent = '✗ Error updating search engine';
+                statusDiv.className = 'text-sm text-red-600';
+            });
+
+            // Show/hide SerpAPI key info
+            const serpapiInfo = document.getElementById('serpapiKeyInfo');
+            serpapiInfo.className = engine === 'serpapi' ? 'mt-2 text-sm text-gray-600' : 'mt-2 text-sm text-gray-600 hidden';
+        }
+    </script>
 </body>
 </html> 

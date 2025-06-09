@@ -89,10 +89,10 @@ conda create -n mlx_p39 python=3.9
 conda activate mlx_p39
 ```
 
-2. Install dependencies:
+2. Install dependencies (make sure we have the right mlx version):
 ```bash
-conda install -c conda-forge mlx
-pip install -r requirements.txt --ignore-installed
+
+pip install -r requirements.txt
 pip install langchain-core
 ```
 

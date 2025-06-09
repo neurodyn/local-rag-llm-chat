@@ -1,5 +1,5 @@
 langchain==0.1.12
-langchain-community[docstore]==0.0.24
+langchain-community[docstore]==0.0.28
 fastapi==0.110.0
 uvicorn==0.27.1
 python-multipart==0.0.9
@@ -27,8 +27,10 @@ nltk>=3.8.1
 pdfminer.six==20240706
 unstructured-pytesseract>=0.3.12
 pi-heif>=0.13.1
-unstructured-inference==0.7.36
+unstructured-inference==0.7.23
 duckduckgo-search==4.1.1
+pycryptodome==3.19.1
+google-search-results==2.4.2
 
 # Testing dependencies
 pytest==8.1.1
