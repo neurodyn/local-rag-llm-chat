@@ -12,7 +12,7 @@ A web-based RAG (Retrieval Augmented Generation) system that runs a LLM locally 
 - Comprehensive error handling and logging
 - Web search integration with multiple search engines:
   - SerpAPI (recommended, requires API key)
-  - DuckDuckGo (currently experiencing rate limiting issues)
+  - DuckDuckGo (working)
 - Combined search results from both uploaded documents and web searches
 
 ## Usage
